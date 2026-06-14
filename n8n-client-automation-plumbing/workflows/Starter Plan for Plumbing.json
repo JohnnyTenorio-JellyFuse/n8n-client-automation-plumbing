@@ -1,0 +1,585 @@
+{
+  "name": "Starter Plan for Plumbing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "starter-voice-agent",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -496,
+        -32
+      ],
+      "id": "a139a1d8-62b3-4701-97ec-c1e91107d517",
+      "name": "Webhook",
+      "webhookId": "b012aeb7-0530-4a96-86c3-3e9d30336800"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\n\nconst now = new Date();\n\nreturn [{\n  caller_name: body.caller_name ?? body.fullName ?? \"\",\n  caller_phone: body.caller_phone ?? body.phoneNumber ?? \"\",\n  service_requested: body.service_requested ?? body.service ?? \"\",\n  urgency: body.urgency ?? \"\",\n  call_summary: body.call_summary ?? \"\",\n  transcript: body.transcript ?? \"\",\n  call_id: body.call_id ?? body.callId ?? (now.getTime().toString()),\n\n  // time fields\n  timestamp: body.timestamp ?? now.toISOString(),\n  date: now.toLocaleString(\"en-US\", { timeZone: \"America/New_York\" })\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        -32
+      ],
+      "id": "870df769-8ae5-4868-8a0a-77b4b3cc73ba",
+      "name": "Parse & Normalize Call"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "79f1c2a4-c426-4d6d-b5a6-2e170c3cc255",
+              "leftValue": "urgency",
+              "rightValue": "emergency",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "6bd08d96-97ed-4e2f-b580-552d6a1b642e",
+              "leftValue": "urgency",
+              "rightValue": "urgent",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "0f9ee958-e1c5-4882-9ae2-cec681573bfc",
+              "leftValue": "urgency",
+              "rightValue": "asap",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "599393b1-7615-46a0-b88b-2a9cb310065c",
+              "leftValue": "urgency",
+              "rightValue": "flood",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "38b745f4-7ed4-4491-a441-f46f6be2ae19",
+              "leftValue": "urgency",
+              "rightValue": "no heat",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -80,
+        -32
+      ],
+      "id": "24c311ac-7dd9-4ed1-a189-0800a18b3640",
+      "name": "Urgency Classifier"
+    },
+    {
+      "parameters": {
+        "from": "+17039367372",
+        "to": "+13015251713",
+        "message": "=🚨 EMERGENCY AI Call Captured\n\nName: {{$json.caller_name}}\nPhone: {{$json.caller_phone}}\nService: {{$json.service_requested}}\n\n⚠️ Marked as EMERGENCY\nCall immediately.\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        368,
+        -112
+      ],
+      "id": "4c7efd42-d60c-4b1c-85a3-c692465d2c44",
+      "name": "Emergency SMS to Business"
+    },
+    {
+      "parameters": {
+        "from": "+17039367372",
+        "to": "+13015251713",
+        "message": "=Hi {{$json.caller_name}}, thanks for calling {{Business Name}}.\n\nWe’ve received your request regarding {{$json.service_requested}}.\n\nA team member will contact you shortly.\n\nReply STOP to opt out.\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        592,
+        -112
+      ],
+      "id": "9ade984e-85c7-4fcb-8644-9b0160539687",
+      "name": "Emergency SMS to Customer"
+    },
+    {
+      "parameters": {
+        "from": "+17039367372",
+        "to": "+13015251713",
+        "message": "=Hi {{$json.caller_name}}, thanks for calling {{Business Name}}.\n\nWe’ve received your request regarding {{$json.service_requested}}.\n\nA member of our team will contact you soon.\n\nReply STOP to opt out.\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        592,
+        48
+      ],
+      "id": "6f5c60d9-b90a-46a0-9e1e-1e86da46a7df",
+      "name": "Standard SMS to Customer"
+    },
+    {
+      "parameters": {
+        "from": "+17039367372",
+        "to": "+13015251713",
+        "message": "=📞 New AI Call Captured\n\nName: {{$json.caller_name}}\nPhone: {{$json.caller_phone}}\nService: {{$json.service_requested}}\nUrgency: Standard\n\nFollow up when available.\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        368,
+        48
+      ],
+      "id": "3092cb01-0490-4df6-9a0d-f9ba7efe9a7e",
+      "name": "Standard SMS to Business"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"received\"\n}\n",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        816,
+        -32
+      ],
+      "id": "b014b293-c544-420b-9da7-5f614cc2cd3d",
+      "name": "Respond to ElevenLabs"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "{{GOOGLE_SHEET_ID}}",
+          "mode": "list",
+          "cachedResultName": "Plumber Call Sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/{{GOOGLE_SHEET_ID}}/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/{{GOOGLE_SHEET_ID}}/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Call ID": "={{ $json.callId }}",
+            "Caller Name": "={{ $json.callerName }}",
+            "Phone": "={{ $json.phone }}",
+            "Service": "={{ $json.service }}",
+            "Status": "New",
+            "Call Summary": "={{ $json.callSummary || $json.transcript }}",
+            "Date": "={{ $json.date }}",
+            "Call Timestamp": "={{ $json.callTimestamp }}",
+            "Urgency": "Emergency",
+            "Priority": "High"
+          },
+          "matchingColumns": [
+            "Call ID"
+          ],
+          "schema": [
+            {
+              "id": "Call ID",
+              "displayName": "Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caller Name",
+              "displayName": "Caller Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Service",
+              "displayName": "Service",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Urgency",
+              "displayName": "Urgency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Call Summary",
+              "displayName": "Call Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Call Timestamp",
+              "displayName": "Call Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        144,
+        -112
+      ],
+      "id": "f09d4519-5e20-4ca6-99d9-c906f6560238",
+      "name": "Append Emergency Row"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "{{GOOGLE_SHEET_ID}}",
+          "mode": "list",
+          "cachedResultName": "Plumber Call Sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/{{GOOGLE_SHEET_ID}}/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/{{GOOGLE_SHEET_ID}}/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Call ID": "={{ $json.callId }}",
+            "Caller Name": "={{ $json.callerName }}",
+            "Phone": "={{ $json.phone }}",
+            "Service": "={{ $json.service }}",
+            "Status": "New",
+            "Call Summary": "={{ $json.callSummary || $json.transcript }}",
+            "Date": "={{ $json.date }}",
+            "Call Timestamp": "={{ $json.callTimestamp }}",
+            "Priority": "Normal",
+            "Urgency": "Standard"
+          },
+          "matchingColumns": [
+            "Call ID"
+          ],
+          "schema": [
+            {
+              "id": "Call ID",
+              "displayName": "Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Caller Name",
+              "displayName": "Caller Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Service",
+              "displayName": "Service",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Urgency",
+              "displayName": "Urgency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Call Summary",
+              "displayName": "Call Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Call Timestamp",
+              "displayName": "Call Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        144,
+        48
+      ],
+      "id": "ad01a52e-3ae0-456f-a5ff-e20f8d873844",
+      "name": "Append Standard Row"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse & Normalize Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Normalize Call": {
+      "main": [
+        [
+          {
+            "node": "Urgency Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Urgency Classifier": {
+      "main": [
+        [
+          {
+            "node": "Append Emergency Row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append Standard Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emergency SMS to Business": {
+      "main": [
+        [
+          {
+            "node": "Emergency SMS to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emergency SMS to Customer": {
+      "main": [
+        [
+          {
+            "node": "Respond to ElevenLabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Standard SMS to Customer": {
+      "main": [
+        [
+          {
+            "node": "Respond to ElevenLabs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Standard SMS to Business": {
+      "main": [
+        [
+          {
+            "node": "Standard SMS to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Emergency Row": {
+      "main": [
+        [
+          {
+            "node": "Emergency SMS to Business",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Standard Row": {
+      "main": [
+        [
+          {
+            "node": "Standard SMS to Business",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

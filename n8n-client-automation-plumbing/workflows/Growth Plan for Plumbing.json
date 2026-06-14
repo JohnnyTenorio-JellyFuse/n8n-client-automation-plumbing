@@ -1,0 +1,764 @@
+{
+  "name": "Growth Plan for Plumbing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "plumber",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -80,
+        -208
+      ],
+      "id": "e06bf89a-4db1-4495-9893-81aeb73ff333",
+      "name": "Webhook to ElevenLabs",
+      "webhookId": "698ccea0-3a02-4e31-bb29-9e631352afe4",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// PLUMBER SERVICE - Parse Information v3\n// Handles both tool calls (calendar checks) and post-call transcripts\n// Uses formatted transcript for reliable status and date extraction\n\nconst payload = items[0].json?.body || items[0].json;\n\nconst isToolCall = payload.requested_date !== undefined || payload.requested_time !== undefined;\nconst isPostCallTranscript = payload.data?.transcript !== undefined;\n\nif (isToolCall) {\n  console.log('=== TOOL CALL DETECTED ===');\n  console.log('Requested Date:', payload.requested_date);\n  console.log('Requested Time:', payload.requested_time);\n  \n  return {\n    json: {\n      webhook_type: 'tool_call',\n      requested_date: payload.requested_date,\n      requested_time: payload.requested_time,\n      duration_minutes: payload.duration_minutes || 60\n    }\n  };\n  \n} else if (isPostCallTranscript) {\n  console.log('=== POST-CALL TRANSCRIPT DETECTED ===');\n  \n  const data = payload?.data;\n  const metadata = data?.metadata || {};\n  const analysisData = metadata?.analysis || {};\n  const transcript = data?.transcript || [];\n\n  // Format transcript\n  const formattedLines = [];\n  for (const turn of transcript) {\n    if (!turn.message && !turn.original_message) continue;\n    const role = turn.role?.toLowerCase();\n    const label = role === 'agent' ? 'AI' : role === 'user' ? 'User' : 'Unknown';\n    const message = (turn.original_message && turn.original_message.trim()) ? turn.original_message.trim() : turn.message?.trim();\n    if (!message) continue;\n    formattedLines.push(`${label}:\\n${message}`);\n  }\n  const formattedTranscript = formattedLines.join('\\n\\n');\n\n  let fullName = '';\n  let email = '';\n  let phoneNumber = '';\n  let serviceAddress = '';\n  let problemDescription = '';\n  let urgencyLevel = 'Routine';\n\n  // Try to extract from agent's confirmation summary first\n  let confirmationFound = false;\n  for (let i = 0; i < transcript.length; i++) {\n    const msg = transcript[i];\n    if (msg.role === 'agent' && msg.message) {\n      const msgText = msg.message;\n      if (msgText.includes('Perfect! I have:') || msgText.includes('I have:') || msgText.includes('let me confirm') || msgText.includes('Let me confirm') || msgText.includes('let me make sure') || msgText.includes('Let me make sure')) {\n        const nameMatch = msgText.match(/Name\\s+is\\s+([^,]+)/i) || msgText.match(/Name:\\s*([^\\n-]+)/);\n        if (nameMatch) {\n          fullName = nameMatch[1].trim();\n          confirmationFound = true;\n        }\n        \n        const phoneMatch = msgText.match(/[Pp]hone\\s+is\\s+([^,]+)/) || msgText.match(/Phone:\\s*([^\\n-]+)/);\n        if (phoneMatch) {\n          let phoneStr = phoneMatch[1].trim();\n          const wordMap = {\n            'zero': '0', 'oh': '0', 'one': '1', 'two': '2', 'three': '3',\n            'four': '4', 'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9'\n          };\n          if (!/\\d/.test(phoneStr)) {\n            const words = phoneStr.toLowerCase().split(/[\\s,]+/);\n            let digits = '';\n            for (const word of words) {\n              if (wordMap[word]) digits += wordMap[word];\n            }\n            if (digits.length === 10) {\n              phoneNumber = digits.replace(/(\\d{3})(\\d{3})(\\d{4})/, '$1-$2-$3');\n            }\n          } else {\n            const digitsOnly = phoneStr.replace(/\\D/g, '');\n            if (digitsOnly.length === 10) {\n              phoneNumber = digitsOnly.replace(/(\\d{3})(\\d{3})(\\d{4})/, '$1-$2-$3');\n            }\n          }\n        }\n        \n        const addressMatch = msgText.match(/[Aa]ddress\\s+is\\s+([^.]+)/) || msgText.match(/Address:\\s*([^\\n-]+)/);\n        if (addressMatch) serviceAddress = addressMatch[1].trim();\n        \n        const problemMatch = msgText.match(/[Ii]ssue\\s+(?:is|as)[:\\s]+([^.]+)/) || msgText.match(/[Pp]roblem:\\s*([^\\n-]+)/);\n        if (problemMatch) problemDescription = problemMatch[1].trim();\n        \n        const emailMatch = msgText.match(/[Ee]mail\\s+is\\s+([^,]+)/) || msgText.match(/Email:\\s*([^\\n-]+)/);\n        if (emailMatch) {\n          let emailStr = emailMatch[1].trim();\n          emailStr = emailStr.replace(/\\s+at\\s+sign\\s+/i, '@').replace(/\\s+at\\s+/i, '@');\n          emailStr = emailStr.replace(/\\s+dot\\s+/gi, '.');\n          email = emailStr;\n        }\n        \n        if (confirmationFound) break;\n      }\n    }\n  }\n\n  // Fallback: extract from Q&A pattern in transcript\n  if (!fullName || !phoneNumber || !serviceAddress) {\n    for (let i = 0; i < transcript.length - 1; i++) {\n      const msg = transcript[i];\n      const nextMsg = transcript[i + 1];\n      \n      if (msg.role === 'agent' && nextMsg.role === 'user') {\n        const agentText = msg.message?.toLowerCase() || '';\n        const userText = nextMsg.message?.trim() || '';\n        \n        if (!fullName && (agentText.includes('full name') || agentText.includes('your name') || agentText.includes('grab your name'))) {\n          const nameMatch = userText.match(/([A-Z][a-z]+\\s+[A-Z][a-z]+)/);\n          if (nameMatch) fullName = nameMatch[1].trim();\n        }\n        \n        if (!serviceAddress && (agentText.includes('address') || agentText.includes('location'))) {\n          const addressMatch = userText.match(/([\\d]+\\s+[A-Za-z\\s,]+)/);\n          if (addressMatch) serviceAddress = addressMatch[1].trim();\n        }\n        \n        if (!problemDescription && (agentText.includes('issue') || agentText.includes('problem') || agentText.includes('happening') || agentText.includes('describe') || agentText.includes('more about'))) {\n          if (userText.length > 5) problemDescription = userText;\n        }\n      }\n    }\n  }\n\n  // Fallback: extract email from anywhere in transcript\n  if (!email) {\n    for (let i = 0; i < transcript.length; i++) {\n      const msg = transcript[i];\n      const msgText = msg.message || msg.original_message || '';\n      \n      const emailMatch = msgText.match(/([a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);\n      if (emailMatch) {\n        email = emailMatch[1];\n        break;\n      }\n      \n      const spokenMatch = msgText.match(/([a-zA-Z0-9._+-]+)\\s+at\\s+([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/i);\n      if (spokenMatch) {\n        email = spokenMatch[1] + '@' + spokenMatch[2];\n        break;\n      }\n      \n      const dottedMatch = msgText.match(/([a-zA-Z0-9]+)\\s+dot\\s+([a-zA-Z0-9]+)\\s+at\\s+([a-zA-Z]+)\\s+dot\\s+([a-zA-Z]+)/i);\n      if (dottedMatch) {\n        email = dottedMatch[1] + '.' + dottedMatch[2] + '@' + dottedMatch[3] + '.' + dottedMatch[4];\n        break;\n      }\n    }\n  }\n\n  // Fallback: extract phone from user messages\n  if (!phoneNumber) {\n    for (let i = 0; i < transcript.length; i++) {\n      const msg = transcript[i];\n      if (msg.role === 'user') {\n        const msgText = msg.message || '';\n        const phoneMatch = msgText.match(/(\\d{3})[\\s\\-\\.]?(\\d{3})[\\s\\-\\.]?(\\d{4})/);\n        if (phoneMatch) {\n          phoneNumber = `${phoneMatch[1]}-${phoneMatch[2]}-${phoneMatch[3]}`;\n          break;\n        }\n      }\n    }\n  }\n\n  // Extract urgency level from keywords\n  for (let i = 0; i < transcript.length; i++) {\n    const msg = transcript[i];\n    if (msg.role === 'user') {\n      const userLower = (msg.message || '').toLowerCase();\n      if (userLower.includes('emergency') || userLower.includes('burst') || userLower.includes('flooding') || userLower.includes('sewage') || userLower.includes('no water')) {\n        urgencyLevel = 'Emergency';\n        break;\n      } else if (userLower.includes('urgent') || userLower.includes('soon') || userLower.includes('today') || userLower.includes('asap')) {\n        urgencyLevel = 'Urgent';\n        break;\n      }\n    }\n  }\n\n  // Build call summary\n  let callSummary = '';\n  if (analysisData?.transcript_summary) {\n    callSummary = analysisData.transcript_summary.trim();\n  } else {\n    callSummary = `${fullName || 'Customer'} called about plumbing issue at ${serviceAddress || 'address unknown'}: ${problemDescription || 'details unknown'}. Urgency: ${urgencyLevel}`;\n  }\n\n  // Determine booking status - search the formatted transcript directly\nlet status = 'New Lead';\nconst transcriptLower = formattedTranscript.toLowerCase();\nif (transcriptLower.includes('appointment is confirmed') ||\n    transcriptLower.includes('appointment has been confirmed') ||\n    transcriptLower.includes(\"i've scheduled\") ||\n    transcriptLower.includes(\"i have scheduled\") ||\n    transcriptLower.includes('scheduled your appointment') ||\n    transcriptLower.includes(\"you're all set\") ||\n    transcriptLower.includes(\"you are all set\") ||\n    transcriptLower.includes('you are booked') ||\n    transcriptLower.includes(\"you're booked\") ||\n    transcriptLower.includes('booking is confirmed') ||\n    transcriptLower.includes(\"you'll receive a confirmation\") ||\n    transcriptLower.includes(\"you'll get a confirmation\") ||\n    transcriptLower.includes(\"you will get a confirmation\") ||\n    transcriptLower.includes(\"all set for\")) {\n  status = 'Scheduled';\n  }\n\n  // Number word to digit mapping\n  const numberWordMap = {\n    'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5,\n    'sixth': 6, 'seventh': 7, 'eighth': 8, 'ninth': 9, 'tenth': 10,\n    'eleventh': 11, 'twelfth': 12, 'thirteenth': 13, 'fourteenth': 14,\n    'fifteenth': 15, 'sixteenth': 16, 'seventeenth': 17, 'eighteenth': 18,\n    'nineteenth': 19, 'twentieth': 20, 'twenty first': 21, 'twenty second': 22,\n    'twenty third': 23, 'twenty fourth': 24, 'twenty fifth': 25,\n    'twenty sixth': 26, 'twenty seventh': 27, 'twenty eighth': 28,\n    'twenty ninth': 29, 'thirtieth': 30, 'thirty first': 31,\n    'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,\n    'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11,\n    'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,\n    'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19,\n    'twenty': 20, 'twenty one': 21, 'twenty two': 22, 'twenty three': 23,\n    'twenty four': 24, 'twenty five': 25, 'twenty six': 26,\n    'twenty seven': 27, 'twenty eight': 28, 'twenty nine': 29,\n    'thirty': 30, 'thirty one': 31\n  };\n\n  // Year word mapping\n  const yearWordMap = {\n    'two thousand twenty four': '2024', 'two thousand twenty five': '2025',\n    'two thousand twenty six': '2026', 'two thousand twenty seven': '2027',\n    'two thousand twenty eight': '2028', 'two thousand twenty nine': '2029',\n    'two thousand thirty': '2030'\n  };\n\n  // Find booking confirmation text from the formatted transcript\n  let bookingConfirmMessage = '';\n  const tLines = formattedTranscript.split('\\n\\n');\n  for (let i = tLines.length - 1; i >= 0; i--) {\n    const line = tLines[i];\n    if (line.startsWith('AI:')) {\n      const text = line.replace('AI:\\n', '').replace(/^\"/, '').replace(/\"$/, '');\n      const textLower = text.toLowerCase();\n      if (textLower.includes('confirmed') || textLower.includes('scheduled') || textLower.includes('have availability') || textLower.includes('available for')) {\n        bookingConfirmMessage = text;\n        break;\n      }\n    }\n  }\n\n  // Extract booking date and time\n  let bookingDate = '';\n  let bookingTime = '';\n  let appointmentDateTime = '';\n\n  if (bookingConfirmMessage) {\n    const msgLower = bookingConfirmMessage.toLowerCase();\n    \n    // Try numeric date first: \"February 17, 2026\"\n    let dateMatch = bookingConfirmMessage.match(/([A-Z][a-z]+)\\s+(\\d{1,2}),?\\s+(\\d{4})/);\n    \n    if (dateMatch) {\n      const monthName = dateMatch[1];\n      const day = parseInt(dateMatch[2]);\n      const year = dateMatch[3];\n      \n      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',\n        'July', 'August', 'September', 'October', 'November', 'December'];\n      const monthIndex = monthNames.indexOf(monthName);\n      \n      if (monthIndex !== -1) {\n        bookingDate = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;\n      }\n    }\n    \n    // Try spelled-out date: \"February seventeen, two thousand twenty six\"\n    if (!bookingDate) {\n      const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',\n        'july', 'august', 'september', 'october', 'november', 'december'];\n      \n      for (let m = 0; m < monthNames.length; m++) {\n        if (msgLower.includes(monthNames[m])) {\n          const monthIndex = m;\n          \n          const afterMonth = msgLower.split(monthNames[m])[1] || '';\n          \n          let day = 0;\n          for (const [word, num] of Object.entries(numberWordMap)) {\n            if (word.includes(' ') && afterMonth.includes(word)) {\n              day = num;\n              break;\n            }\n          }\n          if (!day) {\n            for (const [word, num] of Object.entries(numberWordMap)) {\n              if (!word.includes(' ') && afterMonth.match(new RegExp('\\\\b' + word + '\\\\b'))) {\n                day = num;\n                break;\n              }\n            }\n          }\n          \n          let year = new Date().getFullYear().toString();\n          for (const [yearWord, yearVal] of Object.entries(yearWordMap)) {\n            if (msgLower.includes(yearWord)) {\n              year = yearVal;\n              break;\n            }\n          }\n          \n          const numericYear = bookingConfirmMessage.match(/\\b(20\\d{2})\\b/);\n          if (numericYear) {\n            year = numericYear[1];\n          }\n          \n          if (day > 0) {\n            bookingDate = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;\n          }\n          break;\n        }\n      }\n    }\n  }\n\n  // Extract time from booking confirmation\n  if (bookingConfirmMessage) {\n    const msgLower = bookingConfirmMessage.toLowerCase();\n    \n    // Check for \"noon\" or \"twelve noon\"\n    if (msgLower.includes('noon') || msgLower.includes('twelve noon')) {\n      bookingTime = '12:00';\n    }\n    \n    // Check for \"midnight\"\n    if (!bookingTime && msgLower.includes('midnight')) {\n      bookingTime = '00:00';\n    }\n    \n    // Try standard format: \"3:00 PM\" or \"1:30 PM\"\n    if (!bookingTime) {\n      const timeMatch = bookingConfirmMessage.match(/(\\d{1,2}):(\\d{2})\\s*(AM|PM|am|pm|a\\.m\\.|p\\.m\\.)/i);\n      if (timeMatch) {\n        let hours = parseInt(timeMatch[1]);\n        const minutes = parseInt(timeMatch[2]);\n        const period = timeMatch[3].toUpperCase().replace(/\\./g, '');\n        \n        if (period === 'PM' && hours !== 12) hours += 12;\n        if (period === 'AM' && hours === 12) hours = 0;\n        \n        bookingTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;\n      }\n    }\n    \n    // Try format without minutes: \"3 PM\" or \"1 PM\"\n    if (!bookingTime) {\n      const simpleTimeMatch = bookingConfirmMessage.match(/(\\d{1,2})\\s*(AM|PM|am|pm|a\\.m\\.|p\\.m\\.|o'clock\\s*(?:AM|PM|am|pm)?)/i);\n      if (simpleTimeMatch) {\n        let hours = parseInt(simpleTimeMatch[1]);\n        const periodStr = simpleTimeMatch[2].toUpperCase().replace(/\\./g, '');\n        const isPM = periodStr.includes('PM');\n        const isAM = periodStr.includes('AM');\n        \n        if (isPM && hours !== 12) hours += 12;\n        if (isAM && hours === 12) hours = 0;\n        if (!isPM && !isAM && hours >= 1 && hours <= 6) hours += 12;\n        \n        bookingTime = `${String(hours).padStart(2, '0')}:00`;\n      }\n    }\n    \n    // Try spelled-out time: \"one o'clock pee em\" or \"three p m\"\n    if (!bookingTime) {\n      const timeWords = {\n        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,\n        'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12\n      };\n      \n      for (const [word, num] of Object.entries(timeWords)) {\n        const timePattern = new RegExp(word + \"\\\\s*(?:o'clock|o clock)?\\\\s*(?:p\\\\.?\\\\s*m|a\\\\.?\\\\s*m|pee\\\\s*em|ay\\\\s*em)\", 'i');\n        if (msgLower.match(timePattern)) {\n          let hours = num;\n          if (msgLower.match(new RegExp(word + \".*(?:p\\\\.?\\\\s*m|pee\\\\s*em)\", 'i')) && hours !== 12) {\n            hours += 12;\n          }\n          bookingTime = `${String(hours).padStart(2, '0')}:00`;\n          break;\n        }\n      }\n    }\n  }\n\n  // Combined Appointment Date Time (single field)\n  if (bookingDate && bookingTime) {\n    appointmentDateTime = `${bookingDate}T${bookingTime}:00`;\n  }\n\n  // Service Area Check - Stafford, VA and surrounding areas\n  const serviceAreaZips = ['22554', '22556', '22553', '22555', '22405', '22406', '22407', '22408', '22401', '22402', '22412', '22430', '22172', '22025', '22026', '22134', '22191', '22192', '22193'];\n  let serviceAreaCheck = false;\n  if (serviceAddress) {\n    const zipMatch = serviceAddress.match(/(\\d{5})/);\n    if (zipMatch && serviceAreaZips.includes(zipMatch[1])) {\n      serviceAreaCheck = true;\n    }\n  }\n\n  // Call timestamp\n  const callTimestamp = new Date().toISOString();\n\n  return {\n    json: {\n      webhook_type: 'post_call_transcript',\n      callId: data?.conversation_id || 'Unknown',\n      customerName: fullName || 'Not Provided',\n      email: email || '',\n      phoneNumber: phoneNumber || '',\n      serviceAddress: serviceAddress || '',\n      problemDescription: problemDescription || '',\n      urgencyLevel: urgencyLevel,\n      status: status,\n      callSummary: callSummary,\n      callTranscript: formattedTranscript,\n      callDuration: metadata?.call_duration_secs || 0,\n      appointmentDateTime: appointmentDateTime || null,\n      callTimestamp: callTimestamp,\n      serviceAreaCheck: serviceAreaCheck,\n      agentId: data?.agent_id,\n      eventTimestamp: payload?.event_timestamp,\n      bookingDate: bookingDate,\n      bookingTime: bookingTime\n    }\n  };\n  \n} else {\n  console.log('=== UNKNOWN WEBHOOK TYPE ===');\n  return {\n    json: {\n      webhook_type: 'unknown',\n      error: 'Unable to determine webhook type',\n      raw_payload: payload\n    }\n  };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        144,
+        -208
+      ],
+      "id": "cbbbd521-4ccd-4550-9a09-c32c82fad2b6",
+      "name": "Parse Information"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8d1bc832-8c3f-47e7-9843-9d7144ab2a9e",
+              "leftValue": "={{ $json.webhook_type }}",
+              "rightValue": "tool_call",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        352,
+        -208
+      ],
+      "id": "d2aad3a5-0712-49d6-94bd-6269a0e7e5f8",
+      "name": "Tool Call or Transcript?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = items[0].json || $json;\nconst isToolCall = inputData.webhook_type === 'tool_call';\n\nlet requestedDate;\nlet requestedTime;\n\nif (isToolCall) {\n  requestedDate = inputData.requested_date;\n  requestedTime = inputData.requested_time;\n  \n  console.log('=== TOOL CALL FORMAT ===');\n  console.log('Requested Date:', requestedDate);\n  console.log('Requested Time:', requestedTime);\n  \n} else {\n  const fields = inputData.fields || {};\n  requestedDate = fields['Booking Date'];\n  requestedTime = fields['Booking Time'];\n  \n  console.log('=== AIRTABLE FORMAT ===');\n  console.log('Booking Date:', requestedDate);\n  console.log('Booking Time:', requestedTime);\n}\n\nif (!requestedDate || !requestedTime) {\n  return {\n    error: true,\n    message: \"Missing Booking Date or Booking Time\",\n    debug: { requestedDate, requestedTime, isToolCall }\n  };\n}\n\nconst today = new Date();\nconst startDateObj = new Date(today);\nstartDateObj.setHours(0, 0, 0, 0);\n\nconst endDateObj = new Date(today);\nendDateObj.setDate(endDateObj.getDate() + 30);\nendDateObj.setHours(23, 59, 59, 0);\n\nconst formatSimpleDate = (dateObj) => {\n  const year = dateObj.getFullYear();\n  const month = String(dateObj.getMonth() + 1).padStart(2, '0');\n  const day = String(dateObj.getDate()).padStart(2, '0');\n  return `${year}-${month}-${day}`;\n};\n\nconst startDate = formatSimpleDate(startDateObj);\nconst endDate = formatSimpleDate(endDateObj);\n\nconsole.log('Calendar Query Range:', startDate, 'to', endDate);\n\nreturn {\n  requested_date: requestedDate,\n  requested_time: requestedTime,\n  duration_minutes: inputData.duration_minutes || 60,\n  startDate: startDate,\n  endDate: endDate\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        -224
+      ],
+      "id": "d9577e47-4f0f-47ac-b96d-e07854ccc574",
+      "name": "Format Calendar Search Dates"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "{{BUSINESS_EMAIL_3}}",
+          "mode": "list",
+          "cachedResultName": "{{BUSINESS_EMAIL_3}}"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $json.startDate }}T00:00:00",
+        "timeMax": "={{ $json.endDate }}T23:59:59",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        976,
+        -224
+      ],
+      "id": "570c6dac-741c-47f7-a7ca-081d3540c950",
+      "name": "Check Availability",
+      "alwaysOutputData": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PLUMBER SERVICE - Process Calendar Check with operating hours validation\n// Checks: Mon-Sat 8am-5pm, no Sundays\n// Validates against booked appointments\n\nconst requestedDate = $node['Format Calendar Search Dates'].json.requested_date;\nconst requestedTime = $node['Format Calendar Search Dates'].json.requested_time;\nconst durationMinutes = $node['Format Calendar Search Dates'].json.duration_minutes || 60;\n\nlet calendarEvents;\nif (items.length > 1) {\n  calendarEvents = items.map(item => item.json);\n} else if (Array.isArray($json)) {\n  calendarEvents = $json;\n} else if ($json.events) {\n  calendarEvents = $json.events;\n} else {\n  calendarEvents = [$json];\n}\n\nif (!requestedDate || !requestedTime) {\n  return {\n    json: {\n      error: true,\n      message: \"Missing requested_date or requested_time\",\n      available: false,\n      conflict: true,\n      conflicting_event: \"Error\",\n      booked_date: requestedDate || \"\",\n      booked_time: \"\",\n      debug: { requestedDate, requestedTime }\n    }\n  };\n}\n\nlet reqHours, reqMinutes;\nconst timeStr = requestedTime.trim();\n\nif (timeStr.includes('PM') || timeStr.includes('AM')) {\n  const isPM = /PM/i.test(timeStr);\n  const timePart = timeStr.replace(/\\s*(AM|PM)/i, '').trim();\n  let [hours, minutes] = timePart.split(':').map(Number);\n  \n  if (isPM && hours !== 12) hours += 12;\n  if (!isPM && hours === 12) hours = 0;\n  \n  reqHours = hours;\n  reqMinutes = minutes || 0;\n} else {\n  [reqHours, reqMinutes] = timeStr.split(':').map(n => parseInt(n) || 0);\n}\n\nconst parsedDate = new Date(requestedDate);\n\nif (isNaN(parsedDate.getTime())) {\n  return {\n    json: {\n      error: true,\n      message: `Could not parse date: ${requestedDate}`,\n      available: false,\n      conflict: true,\n      conflicting_event: \"Date Parse Error\",\n      booked_date: requestedDate,\n      booked_time: `${reqHours}:${reqMinutes}`\n    }\n  };\n}\n\nconst year = parsedDate.getFullYear();\nconst month = parsedDate.getMonth();\nconst day = parsedDate.getDate();\n\nconst isoStart = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(reqHours).padStart(2, '0')}:${String(reqMinutes).padStart(2, '0')}:00-05:00`;\n\nconst requestedStart = new Date(isoStart);\nconst requestedEnd = new Date(requestedStart.getTime() + (durationMinutes * 60 * 1000));\n\nlet hasConflict = false;\nlet conflictingEvent = null;\n\n// PLUMBER HOURS: Sunday CLOSED, Mon-Sat 8am-5pm\nif (parsedDate.getDay() === 0) {\n  hasConflict = true;\n  conflictingEvent = { summary: \"Closed on Sundays\" };\n} else if (reqHours < 8 || reqHours >= 17) {\n  hasConflict = true;\n  conflictingEvent = { summary: \"Outside operating hours (8am-5pm)\" };\n}\n\nif (!hasConflict && calendarEvents && calendarEvents.length > 0) {\n  for (let i = 0; i < calendarEvents.length; i++) {\n    const event = calendarEvents[i];\n    \n    const eventStartStr = event.start?.dateTime || event.start?.date;\n    const eventEndStr = event.end?.dateTime || event.end?.date;\n    \n    if (!eventStartStr || !eventEndStr) continue;\n    \n    const eventStart = new Date(eventStartStr);\n    const eventEnd = new Date(eventEndStr);\n    \n    const startTime = requestedStart.getTime();\n    const endTime = requestedEnd.getTime();\n    const eventStartTime = eventStart.getTime();\n    const eventEndTime = eventEnd.getTime();\n    \n    const overlaps = (startTime < eventEndTime) && (endTime > eventStartTime);\n    \n    if (overlaps) {\n      hasConflict = true;\n      conflictingEvent = event;\n      break;\n    }\n  }\n}\n\nconst displayHours12 = reqHours % 12 || 12;\nconst ampm = reqHours >= 12 ? 'PM' : 'AM';\nconst formattedTime = reqMinutes === 0 ? `${displayHours12} ${ampm}` : `${displayHours12}:${String(reqMinutes).padStart(2, '0')} ${ampm}`;\n\nlet response = '';\nif (hasConflict) {\n  if (conflictingEvent?.summary === \"Closed on Sundays\") {\n    response = `We're closed on Sundays. Would you like to schedule for a different day? We're available Monday through Saturday, 8am to 5pm.`;\n  } else if (conflictingEvent?.summary === \"Outside operating hours (8am-5pm)\") {\n    response = `That time is outside our operating hours. We're available Monday through Saturday, 8am to 5pm. What time works better for you?`;\n  } else {\n    response = `That time slot is not available. Would you like to try a different time?`;\n  }\n} else {\n  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];\n  const dateDisplay = `${monthNames[month]} ${day}, ${year}`;\n  response = `Perfect! ${formattedTime} on ${dateDisplay} works great for us.`;\n}\n\nreturn {\n  json: {\n    available: !hasConflict,\n    booked_date: requestedDate,\n    booked_time: `${String(reqHours).padStart(2, '0')}:${String(reqMinutes).padStart(2, '0')}`,\n    conflict: hasConflict,\n    conflicting_event: conflictingEvent ? conflictingEvent.summary : null,\n    message: response\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        -224
+      ],
+      "id": "8c0444fd-cd9b-4a44-893c-69b01fc233e9",
+      "name": "Process Calendar Check"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"available\": \"{{ $json.available }}\",\n  \"message\": \"{{ $json.message }}\",\n  \"booked_date\": \"{{ $json.booked_date }}\",\n  \"booked_time\": \"{{ $json.booked_time }}\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1376,
+        -224
+      ],
+      "id": "dadfb100-3f05-446b-9665-d356dca68501",
+      "name": "Respond to Calendar Tool"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "base": {
+          "__rl": true,
+          "value": "{{AIRTABLE_BASE_ID_2}}",
+          "mode": "list",
+          "cachedResultName": "Alex - Plumber Agent",
+          "cachedResultUrl": "https://airtable.com/{{AIRTABLE_BASE_ID_2}}"
+        },
+        "table": {
+          "__rl": true,
+          "value": "{{AIRTABLE_TABLE_ID_2}}",
+          "mode": "list",
+          "cachedResultName": "Client Calls",
+          "cachedResultUrl": "https://airtable.com/{{AIRTABLE_BASE_ID_2}}/{{AIRTABLE_TABLE_ID_2}}"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Call ID": "={{ $json.callId }}",
+            "Customer Name": "={{ $json.customerName }}",
+            "Email": "={{ $json.email }}",
+            "Phone Number": "={{ $json.phoneNumber }}",
+            "Service Address": "={{ $json.serviceAddress }}",
+            "Problem Description": "={{ $json.problemDescription }}",
+            "Urgency Level": "={{ $json.urgencyLevel }}",
+            "Call Summary": "={{ $json.callSummary }}",
+            "Call Transcript": "={{ $json.callTranscript }}",
+            "Call Duration": "={{ $json.callDuration }}",
+            "Status": "={{ $json.status }}",
+            "Appointment Date Time": "={{ $json.appointmentDateTime ? $json.appointmentDateTime : undefined }}",
+            "Service Area Check": "={{ $json.serviceAreaCheck }}"
+          },
+          "matchingColumns": [
+            "Call ID"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Call ID",
+              "displayName": "Call ID",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Customer Name",
+              "displayName": "Customer Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Phone Number",
+              "displayName": "Phone Number",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Service Address",
+              "displayName": "Service Address",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Problem Description",
+              "displayName": "Problem Description",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Call Summary",
+              "displayName": "Call Summary",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Urgency Level",
+              "displayName": "Urgency Level",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "🔴 Emergency",
+                  "value": "🔴 Emergency"
+                },
+                {
+                  "name": "🟡 Urgent (same day)",
+                  "value": "🟡 Urgent (same day)"
+                },
+                {
+                  "name": "🟢 Scheduled",
+                  "value": "🟢 Scheduled"
+                },
+                {
+                  "name": "Scheduled",
+                  "value": "Scheduled"
+                },
+                {
+                  "name": "Emergency",
+                  "value": "Emergency"
+                },
+                {
+                  "name": "Urgent",
+                  "value": "Urgent"
+                },
+                {
+                  "name": "Routine",
+                  "value": "Routine"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "New Lead",
+                  "value": "New Lead"
+                },
+                {
+                  "name": "Contacted",
+                  "value": "Contacted"
+                },
+                {
+                  "name": "Scheduled",
+                  "value": "Scheduled"
+                },
+                {
+                  "name": "En Route",
+                  "value": "En Route"
+                },
+                {
+                  "name": "In Progress",
+                  "value": "In Progress"
+                },
+                {
+                  "name": "Completed",
+                  "value": "Completed"
+                },
+                {
+                  "name": "Cancelled",
+                  "value": "Cancelled"
+                },
+                {
+                  "name": "Follow-up Required",
+                  "value": "Follow-up Required"
+                },
+                {
+                  "name": "Emergency - Needs Dispatch",
+                  "value": "Emergency - Needs Dispatch"
+                }
+              ],
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Appointment Date Time",
+              "displayName": "Appointment Date Time",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Created",
+              "displayName": "Created",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": true
+            },
+            {
+              "id": "Call Transcript",
+              "displayName": "Call Transcript",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Call Duration",
+              "displayName": "Call Duration",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                {
+                  "name": "Phone Call",
+                  "value": "Phone Call"
+                },
+                {
+                  "name": "Web Form",
+                  "value": "Web Form"
+                },
+                {
+                  "name": "Referral",
+                  "value": "Referral"
+                },
+                {
+                  "name": "Google Ads",
+                  "value": "Google Ads"
+                },
+                {
+                  "name": "Facebook",
+                  "value": "Facebook"
+                },
+                {
+                  "name": "Returning Customer",
+                  "value": "Returning Customer"
+                }
+              ],
+              "readOnly": false,
+              "removed": true
+            },
+            {
+              "id": "Service Area Check",
+              "displayName": "Service Area Check",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "boolean",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "typecast": true
+        }
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        560,
+        -96
+      ],
+      "id": "c9527dbc-301b-4d2c-be40-776a3de4dd9c",
+      "name": "Update CRM"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "authentication": "airtableTokenApi",
+        "baseId": {
+          "__rl": true,
+          "value": "{{AIRTABLE_BASE_ID_2}}",
+          "mode": "id"
+        },
+        "tableId": {
+          "__rl": true,
+          "value": "{{AIRTABLE_TABLE_ID_2}}",
+          "mode": "id"
+        },
+        "triggerField": "Created",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.airtableTrigger",
+      "typeVersion": 1,
+      "position": [
+        144,
+        224
+      ],
+      "id": "c7513000-d41e-4a69-a132-e7f85cdff156",
+      "name": "Airtable Trigger",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "99373a32-b9dc-4497-a177-be64f8dcd0d3",
+              "leftValue": "={{ $json.fields['Call Transcript'] }}",
+              "rightValue": "appointment is confirmed",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "a2c3501f-ccbc-4274-884d-ccc547b2a39f",
+              "leftValue": "={{ $json.fields['Call Transcript'] }}",
+              "rightValue": "you'll receive a confirmation",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "4485770e-7e3b-4da2-86b7-55bbbb70c64d",
+              "leftValue": "={{ $json.fields['Call Transcript'] }}",
+              "rightValue": "you'll get a confirmation",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "01bfa874-52e0-4bc5-8499-08269a0a6e5f",
+              "leftValue": "={{ $json.fields['Call Transcript'] }}",
+              "rightValue": "all set for",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        352,
+        224
+      ],
+      "id": "559bff86-030c-466f-bde4-a384b12651e1",
+      "name": "Appointment Scheduled?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Event Times - reads from Airtable record\n// First tries Appointment Date Time field, then falls back to transcript parsing\n\nconst fields = $json.fields || {};\n\n// ============================================\n// OPTION 1: Use Appointment Date Time field directly (preferred)\n// ============================================\nconst appointmentDT = fields['Appointment Date Time'];\nif (appointmentDT) {\n  const dt = new Date(appointmentDT);\n  if (!isNaN(dt.getTime())) {\n    const pad = n => String(n).padStart(2, '0');\n    const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;\n    const endDT = new Date(dt.getTime() + 60 * 60 * 1000);\n    return {\n      startTime: fmt(dt),\n      endTime: fmt(endDT),\n      fullName: fields['Customer Name'] || 'Customer',\n      email: fields['Email'] || '',\n      phoneNumber: fields['Phone Number'] || '',\n      serviceAddress: fields['Service Address'] || '',\n      problemDescription: fields['Problem Description'] || '',\n    };\n  }\n}\n\n// ============================================\n// OPTION 2: Parse from Call Transcript (fallback)\n// ============================================\nconst transcript = fields['Call Transcript'] || '';\nconst transcriptLower = transcript.toLowerCase();\n\nconst numberWords = {\n  'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,\n  'nine':9,'ten':10,'eleven':11,'twelve':12,'thirteen':13,'fourteen':14,\n  'fifteen':15,'sixteen':16,'seventeen':17,'eighteen':18,'nineteen':19,\n  'twenty':20,'twenty one':21,'twenty two':22,'twenty three':23,'twenty four':24,\n  'twenty five':25,'twenty six':26,'twenty seven':27,'twenty eight':28,\n  'twenty nine':29,'thirty':30,'thirty one':31\n};\n\nconst monthMap = {\n  'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,\n  'july':7,'august':8,'september':9,'october':10,'november':11,'december':12\n};\n\nconst yearWordMap = {\n  'two thousand twenty four': 2024, 'two thousand twenty five': 2025,\n  'two thousand twenty six': 2026, 'two thousand twenty seven': 2027,\n  'two thousand twenty eight': 2028\n};\n\n// Search the ENTIRE transcript for confirmation text, not line-by-line\n// Look for AI blocks that contain confirmation keywords\nconst aiBlocks = transcriptLower.split(/\\bai:\\s*/i).filter(block => block.trim());\nlet appointmentText = '';\n\nfor (let i = aiBlocks.length - 1; i >= 0; i--) {\n  const block = aiBlocks[i];\n  if ((block.includes('confirmed') || block.includes('all set') || block.includes('scheduled') || block.includes('booked')) &&\n      (block.includes('p m') || block.includes('a m') || block.includes('pm') || block.includes('am') || \n       block.includes('noon') || block.includes(\"o'clock\") || block.includes('o clock'))) {\n    appointmentText = block;\n    break;\n  }\n}\n\n// Second pass: look for blocks with just confirmation + month (handles noon without am/pm)\nif (!appointmentText) {\n  for (let i = aiBlocks.length - 1; i >= 0; i--) {\n    const block = aiBlocks[i];\n    if ((block.includes('confirmed') || block.includes('all set') || block.includes('scheduled')) &&\n        Object.keys(monthMap).some(m => block.includes(m))) {\n      appointmentText = block;\n      break;\n    }\n  }\n}\n\nif (!appointmentText) {\n  return { error: true, message: 'No confirmation block found in transcript' };\n}\n\n// Extract month\nconst monthMatch = appointmentText.match(/(january|february|march|april|may|june|july|august|september|october|november|december)/);\nif (!monthMatch) return { error: true, message: 'No month found in confirmation' };\nconst month = monthMap[monthMatch[1]];\n\n// Extract day - try digit first, then spelled-out\nlet day = null;\nconst dayDigit = appointmentText.match(new RegExp(monthMatch[1] + '\\\\s+(\\\\d{1,2})'));\nif (dayDigit) {\n  day = parseInt(dayDigit[1]);\n} else {\n  // Try two-word numbers first (twenty four, twenty one, etc.)\n  const afterMonth = appointmentText.split(monthMatch[1])[1] || '';\n  for (const [word, val] of Object.entries(numberWords)) {\n    if (word.includes(' ') && afterMonth.includes(word)) {\n      day = val;\n      break;\n    }\n  }\n  // Then single-word numbers\n  if (!day) {\n    for (const [word, val] of Object.entries(numberWords)) {\n      if (!word.includes(' ') && afterMonth.match(new RegExp('\\\\b' + word + '\\\\b'))) {\n        day = val;\n        break;\n      }\n    }\n  }\n}\nif (!day) return { error: true, message: 'No day found in confirmation' };\n\n// Extract year - try digit, then spelled-out, then default\nlet year = new Date().getFullYear();\nconst yearDigit = appointmentText.match(/\\b(202\\d)\\b/);\nif (yearDigit) {\n  year = parseInt(yearDigit[1]);\n} else {\n  for (const [yearWord, yearVal] of Object.entries(yearWordMap)) {\n    if (appointmentText.includes(yearWord)) {\n      year = yearVal;\n      break;\n    }\n  }\n}\n\n// Extract time\nlet hour = null;\nlet minutes = 0;\n\n// Check for noon\nif (appointmentText.includes('noon') || appointmentText.includes('twelve noon')) {\n  hour = 12;\n  minutes = 0;\n}\n\n// Check for midnight\nif (hour === null && appointmentText.includes('midnight')) {\n  hour = 0;\n  minutes = 0;\n}\n\n// Try digit time: \"at 9 am\" or \"at 3:30 pm\"\nif (hour === null) {\n  const timeWithMinutes = appointmentText.match(/\\bat\\s+(\\d{1,2}):(\\d{2})\\s*(p\\s*m|a\\s*m|pm|am)/);\n  if (timeWithMinutes) {\n    hour = parseInt(timeWithMinutes[1]);\n    minutes = parseInt(timeWithMinutes[2]);\n    const isPM = timeWithMinutes[3].replace(/\\s/g, '') === 'pm';\n    if (isPM && hour !== 12) hour += 12;\n    if (!isPM && hour === 12) hour = 0;\n  }\n}\n\nif (hour === null) {\n  const timeDigit = appointmentText.match(/\\bat\\s+(\\d{1,2})\\s*(p\\s*m|a\\s*m|pm|am)/);\n  if (timeDigit) {\n    hour = parseInt(timeDigit[1]);\n    const isPM = timeDigit[2].replace(/\\s/g, '') === 'pm';\n    if (isPM && hour !== 12) hour += 12;\n    if (!isPM && hour === 12) hour = 0;\n  }\n}\n// Try military time: \"zero nine hundred hours\", \"fourteen hundred hours\"\nif (hour === null) {\n  const militaryMatch = appointmentText.match(/(?:at\\s+)?(?:zero\\s+)?(\\w+)\\s+hundred\\s+hours/);\n  if (militaryMatch) {\n    const hourWord = militaryMatch[1];\n    if (numberWords[hourWord] !== undefined) {\n      hour = numberWords[hourWord];\n    } else if (/^\\d+$/.test(hourWord)) {\n      hour = parseInt(hourWord);\n    }\n  }\n}\n\n// Try spelled-out time: \"at nine a m\" or \"at three p m\"\nif (hour === null) {\n  const timeWords = ['one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'];\n  for (const w of timeWords) {\n    const pattern = new RegExp('at\\\\s+' + w + \"\\\\s*(?:o'clock|o clock)?\\\\s*(p\\\\s*m|a\\\\s*m|pm|am|pee\\\\s*em|ay\\\\s*em)\");\n    const match = appointmentText.match(pattern);\n    if (match) {\n      hour = numberWords[w];\n      const periodStr = match[1].replace(/\\s/g, '');\n      const isPM = periodStr === 'pm' || periodStr === 'peeem';\n      if (isPM && hour !== 12) hour += 12;\n      if (!isPM && hour === 12) hour = 0;\n      break;\n    }\n  }\n}\n\nif (hour === null) return { error: true, message: 'No time found in confirmation' };\n\nconst pad = n => String(n).padStart(2, '0');\nconst fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;\n\nconst startDT = new Date(year, month - 1, day, hour, minutes, 0);\nconst endDT = new Date(startDT.getTime() + 60 * 60 * 1000);\n\nreturn {\n  startTime: fmt(startDT),\n  endTime: fmt(endDT),\n  fullName: fields['Customer Name'] || 'Customer',\n  email: fields['Email'] || '',\n  phoneNumber: fields['Phone Number'] || '',\n  serviceAddress: fields['Service Address'] || '',\n  problemDescription: fields['Problem Description'] || '',\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        128
+      ],
+      "id": "f4d0cc76-4a01-48fa-8da6-30bbe6a15fb1",
+      "name": "Format Event Times"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "{{BUSINESS_EMAIL_3}}",
+          "mode": "list",
+          "cachedResultName": "{{BUSINESS_EMAIL_3}}"
+        },
+        "start": "={{ $json.startTime }}",
+        "end": "={{ $json.endTime }}",
+        "additionalFields": {
+          "attendees": [
+            "={{ $json.email }}"
+          ],
+          "description": "=Customer: {{ $json.fullName }}\nAddress: {{ $json.serviceAddress }}\nProblem: {{ $json.problemDescription }}\nPhone: {{ $json.phoneNumber }}",
+          "summary": "Plumbing Service Appointment"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        768,
+        128
+      ],
+      "id": "0d994606-7da0-43cc-affc-5578ea52d4e8",
+      "name": "Create Event"
+    },
+    {
+      "parameters": {
+        "from": "+17039367372",
+        "to": "={{ $node['Format Event Times'].json.phoneNumber }}",
+        "message": "=Hi {{ $node['Format Event Times'].json.fullName }}, your plumbing appointment is confirmed!\n\n📅 Date/Time: {{ $node['Format Event Times'].json.startTime }}\n📍 Address: {{ $node['Format Event Times'].json.serviceAddress }}\n🔧 Issue: {{ $node['Format Event Times'].json.problemDescription }}\n\nNeed to reschedule? Call us at {{SAMPLE_PHONE_2}}.\n\n- Service Pro Plumbing",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        976,
+        128
+      ],
+      "id": "64f9812d-fe03-42c4-bc40-c6c875b23daa",
+      "name": "Send SMS (Confirmation)"
+    },
+    {
+      "parameters": {
+        "from": "+17039367372",
+        "to": "={{ $node['Airtable Trigger'].json.fields['Phone Number'] }}",
+        "message": "=Hi {{ $node['Airtable Trigger'].json.fields['Customer Name'] }}, thanks for calling Service Pro Plumbing!\n\nWe'd love to help with your plumbing needs. Call us back anytime to schedule an appointment.\n\n📞 {{SAMPLE_PHONE_2}}\n\n- Service Pro Plumbing",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        560,
+        320
+      ],
+      "id": "cd29e41e-dd4e-4fb0-a6e6-9d79ef840b3a",
+      "name": "Send SMS (Request Booking)"
+    }
+  ],
+  "connections": {
+    "Webhook to ElevenLabs": {
+      "main": [
+        [
+          {
+            "node": "Parse Information",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Information": {
+      "main": [
+        [
+          {
+            "node": "Tool Call or Transcript?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool Call or Transcript?": {
+      "main": [
+        [
+          {
+            "node": "Format Calendar Search Dates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Calendar Search Dates": {
+      "main": [
+        [
+          {
+            "node": "Check Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Availability": {
+      "main": [
+        [
+          {
+            "node": "Process Calendar Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Calendar Check": {
+      "main": [
+        [
+          {
+            "node": "Respond to Calendar Tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Airtable Trigger": {
+      "main": [
+        [
+          {
+            "node": "Appointment Scheduled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment Scheduled?": {
+      "main": [
+        [
+          {
+            "node": "Format Event Times",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send SMS (Request Booking)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Event Times": {
+      "main": [
+        [
+          {
+            "node": "Create Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Event": {
+      "main": [
+        [
+          {
+            "node": "Send SMS (Confirmation)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update CRM": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
